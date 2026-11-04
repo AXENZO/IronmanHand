@@ -1,0 +1,1458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iron Man Repulsor - Realistic</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body { 
+      height: 100%; 
+      background: #000; 
+      overflow: hidden; 
+      font-family: 'Orbitron', monospace;
+    }
+
+    .layer {
+      position: fixed; inset: 0;
+      width: 100vw; height: 100vh;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+    #cam { z-index: 0; }
+    #fx-canvas { z-index: 2; pointer-events: none; }
+
+    .vignette {
+      position: fixed; inset: 0;
+      background: 
+        radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.7) 100%),
+        linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, transparent 20%, transparent 80%, rgba(0,0,0,0.4) 100%);
+      pointer-events: none; z-index: 3;
+    }
+
+    .grain {
+      position: fixed; inset: -100%;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+      opacity: 0.03;
+      animation: grainShift 0.5s steps(4) infinite;
+      pointer-events: none;
+      z-index: 4;
+    }
+
+    @keyframes grainShift {
+      0% { transform: translate(0, 0); }
+      25% { transform: translate(-2%, 3%); }
+      50% { transform: translate(3%, -2%); }
+      75% { transform: translate(-3%, -3%); }
+      100% { transform: translate(2%, 2%); }
+    }
+
+    #shake-container {
+      position: fixed; inset: 0;
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    .shake {
+      animation: screenShake 0.4s ease-out;
+    }
+
+    @keyframes screenShake {
+      0%, 100% { transform: translate(0, 0); }
+      10% { transform: translate(-12px, 6px); }
+      20% { transform: translate(10px, -10px); }
+      30% { transform: translate(-8px, 4px); }
+      40% { transform: translate(6px, -6px); }
+      50% { transform: translate(-4px, 3px); }
+      60% { transform: translate(3px, -3px); }
+      70% { transform: translate(-2px, 1px); }
+      80% { transform: translate(1px, 0); }
+      90% { transform: translate(0, -1px); }
+    }
+
+    .hud {
+      position: fixed;
+      pointer-events: none;
+      z-index: 10;
+      color: #00d4ff;
+      text-shadow: 0 0 20px rgba(0, 212, 255, 0.8);
+    }
+
+    .hud-corner {
+      width: 80px; height: 80px;
+      border: 2px solid rgba(0, 212, 255, 0.4);
+    }
+
+    .hud-tl { top: 20px; left: 20px; border-right: none; border-bottom: none; }
+    .hud-tr { top: 20px; right: 20px; border-left: none; border-bottom: none; }
+    .hud-bl { bottom: 20px; left: 20px; border-right: none; border-top: none; }
+    .hud-br { bottom: 20px; right: 20px; border-left: none; border-top: none; }
+
+    .hud-info {
+      top: 30px; left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      font-size: 11px;
+      letter-spacing: 3px;
+    }
+
+    .hud-status {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 5px;
+      color: #fff;
+    }
+
+    .hud-power-bar {
+      width: 200px; height: 4px;
+      background: rgba(255,255,255,0.1);
+      margin: 10px auto;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .hud-power-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #00d4ff, #fff);
+      width: 0%;
+      transition: width 0.1s;
+      box-shadow: 0 0 10px #00d4ff;
+    }
+
+    .hud-label {
+      font-size: 9px;
+      opacity: 0.7;
+    }
+
+    .charge-warning {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 24px;
+      font-weight: 900;
+      color: #ff0040;
+      text-shadow: 0 0 30px #ff0040;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 15;
+      letter-spacing: 5px;
+    }
+
+    .charge-warning.active {
+      animation: warningPulse 0.2s ease-in-out infinite;
+    }
+
+    @keyframes warningPulse {
+      0%, 100% { opacity: 0.8; transform: translate(-50%, -50%) scale(1); }
+      50% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+    }
+
+    .repulsor-core {
+      position: fixed;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 20;
+      background: radial-gradient(circle,
+        #ffffff 0%,
+        #e0f7ff 20%,
+        #80dfff 40%,
+        rgba(0, 150, 255, 0.6) 60%,
+        transparent 100%);
+      box-shadow: 
+        0 0 30px rgba(0, 200, 255, 0.8),
+        0 0 60px rgba(0, 150, 255, 0.5),
+        0 0 100px rgba(0, 100, 255, 0.3);
+      opacity: 0;
+      will-change: transform, opacity;
+    }
+
+    .repulsor-ring {
+      position: fixed;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 19;
+      border: 3px solid rgba(0, 200, 255, 0.6);
+      box-shadow: 
+        0 0 20px rgba(0, 200, 255, 0.4),
+        inset 0 0 20px rgba(0, 200, 255, 0.2);
+      opacity: 0;
+      will-change: transform, opacity;
+    }
+
+    .particles {
+      position: fixed;
+      pointer-events: none;
+      z-index: 18;
+    }
+
+    .particle {
+      position: absolute;
+      border-radius: 50%;
+      background: radial-gradient(circle, #fff, #00d4ff);
+      box-shadow: 0 0 10px #00d4ff;
+      pointer-events: none;
+    }
+
+    /* ===== BEAM ===== */
+    .beam-container {
+      position: fixed;
+      pointer-events: none;
+      z-index: 25;
+      opacity: 0;
+      will-change: transform, opacity;
+    }
+
+    .beam-core {
+      position: absolute;
+      height: 10px;
+      background: linear-gradient(to right,
+        #ffffff 0%,
+        #ffffff 10%,
+        #d8f5ff 30%,
+        #60c8ff 60%,
+        rgba(0, 150, 255, 0.3) 90%,
+        transparent 100%);
+      border-radius: 5px;
+      box-shadow: 
+        0 0 15px #fff, 
+        0 0 35px #00d4ff, 
+        0 0 60px #0096ff,
+        0 0 90px rgba(0, 100, 255, 0.5);
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    .beam-glow {
+      position: absolute;
+      height: 35px;
+      background: linear-gradient(to right,
+        rgba(0, 212, 255, 0.6) 0%,
+        rgba(0, 150, 255, 0.3) 50%,
+        transparent 100%);
+      border-radius: 17px;
+      filter: blur(8px);
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    .beam-outer {
+      position: absolute;
+      height: 70px;
+      background: linear-gradient(to right,
+        rgba(0, 150, 255, 0.3) 0%,
+        rgba(0, 80, 255, 0.12) 50%,
+        transparent 100%);
+      border-radius: 35px;
+      filter: blur(20px);
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    /* ===== MUZZLE FLASH ===== */
+    .muzzle-flash {
+      position: fixed;
+      pointer-events: none;
+      z-index: 30;
+      opacity: 0;
+      will-change: transform, opacity;
+    }
+
+    .flash-core {
+      position: absolute;
+      width: 150px; height: 150px;
+      transform: translate(-50%, -50%);
+      background: radial-gradient(circle,
+        #ffffff 0%,
+        #e0f7ff 25%,
+        rgba(0, 200, 255, 0.8) 55%,
+        rgba(0, 100, 255, 0.3) 80%,
+        transparent 100%);
+      border-radius: 50%;
+      filter: blur(2px);
+    }
+
+    .flash-spikes {
+      position: absolute;
+      width: 300px; height: 300px;
+      transform: translate(-50%, -50%);
+      background: conic-gradient(from 0deg,
+        transparent 0deg, rgba(255,255,255,0.9) 8deg, transparent 16deg,
+        transparent 40deg, rgba(255,255,255,0.7) 48deg, transparent 56deg,
+        transparent 80deg, rgba(0,212,255,0.9) 88deg, transparent 96deg,
+        transparent 120deg, rgba(255,255,255,0.7) 128deg, transparent 136deg,
+        transparent 160deg, rgba(255,255,255,0.9) 168deg, transparent 176deg,
+        transparent 200deg, rgba(0,212,255,0.7) 208deg, transparent 216deg,
+        transparent 240deg, rgba(255,255,255,0.9) 248deg, transparent 256deg,
+        transparent 280deg, rgba(255,255,255,0.7) 288deg, transparent 296deg,
+        transparent 320deg, rgba(0,212,255,0.9) 328deg, transparent 336deg);
+      border-radius: 50%;
+      animation: flashSpin 0.08s linear infinite;
+      filter: blur(1px);
+    }
+
+    .flash-ring {
+      position: absolute;
+      width: 120px; height: 120px;
+      transform: translate(-50%, -50%);
+      border: 4px solid rgba(255, 255, 255, 0.9);
+      border-radius: 50%;
+      box-shadow: 0 0 30px rgba(0, 200, 255, 0.8), inset 0 0 20px rgba(255,255,255,0.4);
+      animation: flashRingExpand 0.3s ease-out forwards;
+    }
+
+    @keyframes flashRingExpand {
+      0% { transform: translate(-50%, -50%) scale(0.3); opacity: 1; }
+      100% { transform: translate(-50%, -50%) scale(3); opacity: 0; }
+    }
+
+    @keyframes flashSpin {
+      to { transform: translate(-50%, -50%) rotate(45deg); }
+    }
+
+    /* ===== IMPACT ===== */
+    .impact-container {
+      position: fixed;
+      pointer-events: none;
+      z-index: 28;
+      opacity: 0;
+      will-change: transform, opacity;
+    }
+
+    .impact-flash {
+      position: absolute;
+      width: 200px; height: 200px;
+      transform: translate(-50%, -50%);
+      background: radial-gradient(circle,
+        #ffffff 0%,
+        #fff5e0 15%,
+        #ffd700 35%,
+        #ff6b00 55%,
+        rgba(255, 0, 0, 0.5) 75%,
+        transparent 100%);
+      border-radius: 50%;
+      animation: impactFlash 0.4s ease-out forwards;
+    }
+
+    @keyframes impactFlash {
+      0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+      50% { transform: translate(-50%, -50%) scale(1.5); opacity: 0.9; }
+      100% { transform: translate(-50%, -50%) scale(2.5); opacity: 0; }
+    }
+
+    .impact-shockwave {
+      position: absolute;
+      width: 300px; height: 300px;
+      transform: translate(-50%, -50%);
+      border: 3px solid rgba(200, 240, 255, 0.9);
+      border-radius: 50%;
+      box-shadow: 0 0 30px rgba(0,200,255,0.7);
+      animation: shockwave 0.5s cubic-bezier(0.1,0.8,0.3,1) forwards;
+    }
+
+    .impact-shockwave-2 {
+      position: absolute;
+      width: 200px; height: 200px;
+      transform: translate(-50%, -50%);
+      border: 2px solid rgba(255, 255, 255, 0.8);
+      border-radius: 50%;
+      box-shadow: 0 0 20px rgba(255,255,255,0.6);
+      animation: shockwave2 0.6s cubic-bezier(0.1,0.8,0.3,1) forwards;
+    }
+
+    @keyframes shockwave {
+      0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+      100% { transform: translate(-50%, -50%) scale(4); opacity: 0; }
+    }
+
+    @keyframes shockwave2 {
+      0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+      50% { transform: translate(-50%, -50%) scale(2); opacity: 0.6; }
+      100% { transform: translate(-50%, -50%) scale(3.5); opacity: 0; }
+    }
+
+    .impact-debris {
+      position: absolute;
+      width: 8px; height: 8px;
+      background: #ffd700;
+      border-radius: 2px;
+      box-shadow: 0 0 10px #ff6b00;
+    }
+
+    .screen-flash {
+      position: fixed; inset: 0;
+      background: radial-gradient(circle at var(--fx, 50%) var(--fy, 50%),
+        rgba(255, 255, 255, 0.9) 0%,
+        rgba(0, 212, 255, 0.5) 20%,
+        rgba(0, 100, 255, 0.2) 40%,
+        transparent 70%);
+      pointer-events: none;
+      opacity: 0;
+      z-index: 35;
+    }
+
+    .heat-distortion {
+      position: fixed;
+      pointer-events: none;
+      z-index: 22;
+      opacity: 0;
+      background: radial-gradient(ellipse,
+        transparent 30%,
+        rgba(255, 255, 255, 0.1) 50%,
+        transparent 70%);
+      filter: url(#heatwave);
+    }
+
+    #instructions {
+      position: fixed;
+      bottom: 40px; left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      z-index: 10;
+      pointer-events: none;
+      opacity: 0.9;
+    }
+
+    .instruction-text {
+      color: #fff;
+      font-size: 12px;
+      letter-spacing: 3px;
+      text-shadow: 0 0 10px rgba(0, 212, 255, 0.8);
+      margin-bottom: 10px;
+    }
+
+    .instruction-keys {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+    }
+
+    .key {
+      padding: 8px 16px;
+      border: 1px solid rgba(0, 212, 255, 0.5);
+      border-radius: 4px;
+      color: #00d4ff;
+      font-size: 10px;
+      background: rgba(0, 0, 0, 0.5);
+    }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" style="position: absolute;">
+    <filter id="heatwave">
+      <feTurbulence type="fractalNoise" baseFrequency="0.01 0.05" numOctaves="2" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="20" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </svg>
+
+  <div id="shake-container">
+    <video id="cam" class="layer" autoplay playsinline muted></video>
+    <canvas id="fx-canvas" class="layer"></canvas>
+  </div>
+
+  <div class="vignette"></div>
+  <div class="grain"></div>
+  <div class="screen-flash" id="screenFlash"></div>
+
+  <div class="hud hud-corner hud-tl"></div>
+  <div class="hud hud-corner hud-tr"></div>
+  <div class="hud hud-corner hud-bl"></div>
+  <div class="hud hud-corner hud-br"></div>
+
+  <div class="hud hud-info">
+    <div class="hud-status" id="hudStatus">STANDBY</div>
+    <div class="hud-label">REPULSOR CHARGE</div>
+    <div class="hud-power-bar">
+      <div class="hud-power-fill" id="hudPowerFill"></div>
+    </div>
+    <div class="hud-label" id="hudPowerText">0%</div>
+  </div>
+
+  <div class="charge-warning" id="chargeWarning">MAX CHARGE</div>
+
+  <div class="repulsor-core" data-slot="0"></div>
+  <div class="repulsor-core" data-slot="1"></div>
+  <div class="repulsor-ring" data-slot="0"></div>
+  <div class="repulsor-ring" data-slot="1"></div>
+  <div class="particles" data-slot="0"></div>
+  <div class="particles" data-slot="1"></div>
+
+  <div class="beam-container" data-slot="0">
+    <div class="beam-outer"></div>
+    <div class="beam-glow"></div>
+    <div class="beam-core"></div>
+  </div>
+  <div class="beam-container" data-slot="1">
+    <div class="beam-outer"></div>
+    <div class="beam-glow"></div>
+    <div class="beam-core"></div>
+  </div>
+
+  <div class="muzzle-flash" data-slot="0">
+    <div class="flash-spikes"></div>
+    <div class="flash-core"></div>
+    <div class="flash-ring"></div>
+  </div>
+  <div class="muzzle-flash" data-slot="1">
+    <div class="flash-spikes"></div>
+    <div class="flash-core"></div>
+    <div class="flash-ring"></div>
+  </div>
+
+  <div class="impact-container" data-slot="0"></div>
+  <div class="impact-container" data-slot="1"></div>
+
+  <div class="heat-distortion" id="heatDistortion"></div>
+
+  <div id="instructions">
+    <div class="instruction-text">IRON MAN REPULSOR SYSTEM</div>
+    <div class="instruction-keys">
+      <div class="key">CLOSE FIST = CHARGE</div>
+      <div class="key">OPEN PALM = FIRE</div>
+    </div>
+  </div>
+
+  <script>
+    const camVideo = document.getElementById('cam');
+    const canvas = document.getElementById('fx-canvas');
+    const pen = canvas.getContext('2d');
+    const shakeContainer = document.getElementById('shake-container');
+    const screenFlash = document.getElementById('screenFlash');
+    const heatDistortion = document.getElementById('heatDistortion');
+    const hudStatus = document.getElementById('hudStatus');
+    const hudPowerFill = document.getElementById('hudPowerFill');
+    const hudPowerText = document.getElementById('hudPowerText');
+    const chargeWarning = document.getElementById('chargeWarning');
+
+    const effects = {
+      core: document.querySelectorAll('.repulsor-core'),
+      ring: document.querySelectorAll('.repulsor-ring'),
+      particles: document.querySelectorAll('.particles'),
+      beam: document.querySelectorAll('.beam-container'),
+      flash: document.querySelectorAll('.muzzle-flash'),
+      impact: document.querySelectorAll('.impact-container')
+    };
+
+    const handState = [
+      { charge: 0, isFiring: false, detected: false, palmPos: null, particles: [], wasFist: false },
+      { charge: 0, isFiring: false, detected: false, palmPos: null, particles: [], wasFist: false }
+    ];
+
+    let audioCtx = null;
+    let chargeOsc = null;
+    let chargeGain = null;
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      return audioCtx;
+    }
+
+    function playChargeSound(slot) {
+      try {
+        const ctx = initAudio();
+        if (chargeOsc) return;
+
+        chargeOsc = ctx.createOscillator();
+        chargeGain = ctx.createGain();
+        const filter = ctx.createBiquadFilter();
+
+        chargeOsc.type = 'sawtooth';
+        chargeOsc.frequency.setValueAtTime(50, ctx.currentTime);
+        chargeOsc.frequency.exponentialRampToValueAtTime(200, ctx.currentTime + 2);
+
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(200, ctx.currentTime);
+        filter.frequency.exponentialRampToValueAtTime(2000, ctx.currentTime + 2);
+
+        chargeGain.gain.setValueAtTime(0, ctx.currentTime);
+        chargeGain.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 0.1);
+
+        chargeOsc.connect(filter);
+        filter.connect(chargeGain);
+        chargeGain.connect(ctx.destination);
+        chargeOsc.start();
+      } catch (e) { console.log('Audio not available'); }
+    }
+
+    function stopChargeSound() {
+      try {
+        if (chargeOsc && audioCtx) {
+          chargeGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+          chargeOsc.stop(audioCtx.currentTime + 0.2);
+          chargeOsc = null;
+          chargeGain = null;
+        }
+      } catch (e) {}
+    }
+
+    function playFireSound() {
+      try {
+        const ctx = initAudio();
+
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const noise = ctx.createBufferSource();
+        const noiseGain = ctx.createGain();
+
+        const bufferSize = ctx.sampleRate * 0.5;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        noise.buffer = buffer;
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(150, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(30, ctx.currentTime + 0.3);
+
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(3000, ctx.currentTime);
+        filter.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.5);
+
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+
+        noiseGain.gain.setValueAtTime(0.2, ctx.currentTime);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        noise.connect(filter);
+        filter.connect(noiseGain);
+        noiseGain.connect(ctx.destination);
+
+        osc.start();
+        osc.stop(ctx.currentTime + 0.5);
+        noise.start();
+        noise.stop(ctx.currentTime + 0.5);
+      } catch (e) { console.log('Audio not available'); }
+    }
+
+    const WRIST = 0;
+    const THUMB_CMC = 1, THUMB_MCP = 2, THUMB_IP = 3, THUMB_TIP = 4;
+    const INDEX_MCP = 5, INDEX_PIP = 6, INDEX_DIP = 7, INDEX_TIP = 8;
+    const MIDDLE_MCP = 9, MIDDLE_PIP = 10, MIDDLE_DIP = 11, MIDDLE_TIP = 12;
+    const RING_MCP = 13, RING_PIP = 14, RING_DIP = 15, RING_TIP = 16;
+    const PINKY_MCP = 17, PINKY_PIP = 18, PINKY_DIP = 19, PINKY_TIP = 20;
+
+    const FINGERS = [
+      { mcp: INDEX_MCP, pip: INDEX_PIP, dip: INDEX_DIP, tip: INDEX_TIP, name: 'index' },
+      { mcp: MIDDLE_MCP, pip: MIDDLE_PIP, dip: MIDDLE_DIP, tip: MIDDLE_TIP, name: 'middle' },
+      { mcp: RING_MCP, pip: RING_PIP, dip: RING_DIP, tip: RING_TIP, name: 'ring' },
+      { mcp: PINKY_MCP, pip: PINKY_PIP, dip: PINKY_DIP, tip: PINKY_TIP, name: 'pinky' }
+    ];
+
+    const CHARGE_RATE = 0.03;
+    const DECAY_RATE = 0.06;
+    const FIRE_DURATION = 800;
+    const BEAM_LENGTH = 1500;
+
+    let videoMap = { offsetXNorm: 0, offsetYNorm: 0, visW: 1, visH: 1 };
+
+    function updateVideoMap() {
+      const vw = camVideo.videoWidth || window.innerWidth;
+      const vh = camVideo.videoHeight || window.innerHeight;
+      const ww = window.innerWidth;
+      const wh = window.innerHeight;
+      const videoAspect = vw / vh;
+      const windowAspect = ww / wh;
+
+      if (videoAspect > windowAspect) {
+        videoMap.visH = 1;
+        videoMap.visW = windowAspect / videoAspect;
+        videoMap.offsetXNorm = (1 - videoMap.visW) / 2;
+        videoMap.offsetYNorm = 0;
+      } else {
+        videoMap.visW = 1;
+        videoMap.visH = videoAspect / windowAspect;
+        videoMap.offsetYNorm = (1 - videoMap.visH) / 2;
+        videoMap.offsetXNorm = 0;
+      }
+
+      canvas.width = ww;
+      canvas.height = wh;
+    }
+
+    window.addEventListener('resize', updateVideoMap);
+
+    function toScreen(lm) {
+      const nx = (lm.x - videoMap.offsetXNorm) / videoMap.visW;
+      const ny = (lm.y - videoMap.offsetYNorm) / videoMap.visH;
+      return {
+        x: (1 - nx) * window.innerWidth,
+        y: ny * window.innerHeight
+      };
+    }
+
+    function isPalmOpen(lm) {
+      const wrist = lm[WRIST];
+      let extended = 0;
+      for (const f of FINGERS) {
+        const dTip = Math.hypot(lm[f.tip].x - wrist.x, lm[f.tip].y - wrist.y);
+        const dPip = Math.hypot(lm[f.pip].x - wrist.x, lm[f.pip].y - wrist.y);
+        if (dTip > dPip * 1.1) extended++;
+      }
+      return extended >= 3;
+    }
+
+    function isFist(lm) {
+      const wrist = lm[WRIST];
+      let curled = 0;
+      for (const f of FINGERS) {
+        const dTip = Math.hypot(lm[f.tip].x - wrist.x, lm[f.tip].y - wrist.y);
+        const dPip = Math.hypot(lm[f.pip].x - wrist.x, lm[f.pip].y - wrist.y);
+        if (dTip < dPip * 0.9) curled++;
+      }
+      return curled >= 3;
+    }
+
+    function drawRealisticArmor(lm, slot, charge, isCharging) {
+      const pts = lm.map(p => toScreen(p));
+      const st = handState[slot];
+
+      const handSize = Math.hypot(
+        pts[MIDDLE_MCP].x - pts[WRIST].x,
+        pts[MIDDLE_MCP].y - pts[WRIST].y
+      );
+      const scale = Math.max(0.5, Math.min(1.5, handSize / 100));
+
+      const palmCenter = {
+        x: (pts[WRIST].x + pts[MIDDLE_MCP].x + pts[INDEX_MCP].x + pts[RING_MCP].x + pts[PINKY_MCP].x) / 5,
+        y: (pts[WRIST].y + pts[MIDDLE_MCP].y + pts[INDEX_MCP].y + pts[RING_MCP].y + pts[PINKY_MCP].y) / 5
+      };
+      st.palmPos = palmCenter;
+
+      pen.save();
+
+      // ===== IRON MAN MARK 85 COLOR SCHEME =====
+      // Silver/Grey Metallic Gradient
+      const silverGrad = pen.createLinearGradient(
+        pts[WRIST].x, pts[WRIST].y,
+        pts[MIDDLE_TIP].x, pts[MIDDLE_TIP].y
+      );
+      silverGrad.addColorStop(0, '#2a2e35');
+      silverGrad.addColorStop(0.15, '#6a7280');
+      silverGrad.addColorStop(0.4, '#d8dde2');
+      silverGrad.addColorStop(0.6, '#f0f4f8');
+      silverGrad.addColorStop(0.85, '#8a929c');
+      silverGrad.addColorStop(1, '#1a1d22');
+
+      // Red Accent Gradient
+      const redGrad = pen.createLinearGradient(
+        pts[WRIST].x - 20, pts[WRIST].y,
+        pts[WRIST].x + 20, pts[WRIST].y
+      );
+      redGrad.addColorStop(0, '#5c0000');
+      redGrad.addColorStop(0.3, '#a8102a');
+      redGrad.addColorStop(0.5, '#e2342f');
+      redGrad.addColorStop(0.7, '#a8102a');
+      redGrad.addColorStop(1, '#5c0000');
+
+      const rimAlpha = 0.35 + charge * 0.45;
+
+      const wristAngle = Math.atan2(
+        pts[MIDDLE_MCP].y - pts[WRIST].y,
+        pts[MIDDLE_MCP].x - pts[WRIST].x
+      );
+
+      // ===== DORSAL HAND PLATE (RED) =====
+      const knuckleCenter = {
+        x: (pts[INDEX_MCP].x + pts[MIDDLE_MCP].x + pts[RING_MCP].x + pts[PINKY_MCP].x) / 4,
+        y: (pts[INDEX_MCP].y + pts[MIDDLE_MCP].y + pts[RING_MCP].y + pts[PINKY_MCP].y) / 4
+      };
+
+      pen.save();
+      pen.translate(knuckleCenter.x, knuckleCenter.y);
+      pen.rotate(wristAngle);
+
+      const plateLen = 70 * scale;
+      const plateW = 55 * scale;
+
+      pen.shadowColor = 'rgba(0,0,0,0.6)';
+      pen.shadowBlur = 12;
+      pen.shadowOffsetY = 5;
+
+      pen.fillStyle = redGrad;
+      pen.strokeStyle = 'rgba(20,20,20,0.8)';
+      pen.lineWidth = 2;
+      pen.beginPath();
+      pen.roundRect(-plateLen/2, -plateW/2, plateLen, plateW, 12);
+      pen.fill();
+      pen.stroke();
+      pen.shadowBlur = 0;
+      pen.shadowOffsetY = 0;
+
+      // Circuitry lines on the red plate
+      pen.strokeStyle = `rgba(255, 100, 50, ${0.3 + charge * 0.6})`;
+      pen.lineWidth = 1.5;
+      pen.shadowBlur = 10;
+      pen.shadowColor = '#ff4400';
+      pen.beginPath();
+      pen.moveTo(-plateLen/2 + 10, -plateW/2 + 10);
+      pen.lineTo(plateLen/2 - 10, -plateW/2 + 10);
+      pen.moveTo(-plateLen/2 + 10, plateW/2 - 10);
+      pen.lineTo(plateLen/2 - 10, plateW/2 - 10);
+      pen.moveTo(0, -plateW/2 + 10);
+      pen.lineTo(0, plateW/2 - 10);
+      pen.stroke();
+      pen.shadowBlur = 0;
+
+      pen.restore();
+
+      // ===== WRIST GAUNTLET (SILVER) =====
+      pen.save();
+      pen.translate(pts[WRIST].x, pts[WRIST].y);
+      pen.rotate(wristAngle);
+
+      const wristWidth = 50 * scale;
+      const wristLength = 65 * scale;
+
+      pen.shadowColor = 'rgba(0,0,0,0.6)';
+      pen.shadowBlur = 10;
+      pen.shadowOffsetY = 4;
+
+      pen.fillStyle = silverGrad;
+      pen.strokeStyle = `rgba(255, 255, 255, ${rimAlpha * 0.8})`;
+      pen.lineWidth = 2.5;
+      pen.beginPath();
+      pen.roundRect(-wristLength/2, -wristWidth/2, wristLength, wristWidth, 12);
+      pen.fill();
+      pen.stroke();
+      pen.shadowBlur = 0;
+      pen.shadowOffsetY = 0;
+
+      // Panel seam lines
+      pen.strokeStyle = 'rgba(0,0,0,0.5)';
+      pen.lineWidth = 1.2;
+      pen.beginPath();
+      pen.moveTo(-wristLength/2 + wristLength*0.3, -wristWidth/2);
+      pen.lineTo(-wristLength/2 + wristLength*0.3, wristWidth/2);
+      pen.moveTo(-wristLength/2 + wristLength*0.65, -wristWidth/2);
+      pen.lineTo(-wristLength/2 + wristLength*0.65, wristWidth/2);
+      pen.stroke();
+
+      // Red accent strip in center of gauntlet
+      pen.fillStyle = redGrad;
+      pen.beginPath();
+      pen.roundRect(-wristLength/2 + 8, -wristWidth/2 + 6, wristLength - 16, wristWidth - 12, 8);
+      pen.fill();
+
+      // Highlight on red strip
+      const wristHighlight = pen.createLinearGradient(0, -wristWidth/2, 0, wristWidth/2);
+      wristHighlight.addColorStop(0, 'rgba(255,255,255,0.3)');
+      wristHighlight.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+      wristHighlight.addColorStop(1, 'rgba(0,0,0,0.3)');
+      pen.fillStyle = wristHighlight;
+      pen.beginPath();
+      pen.roundRect(-wristLength/2 + 8, -wristWidth/2 + 6, wristLength - 16, wristWidth - 12, 8);
+      pen.fill();
+
+      // Glowing vents
+      for (let v = 0; v < 4; v++) {
+        const ventGlow = 0.2 + charge * 0.7;
+        pen.fillStyle = `rgba(0, 212, 255, ${ventGlow})`;
+        pen.shadowBlur = 5 + charge * 10;
+        pen.shadowColor = '#00d4ff';
+        pen.beginPath();
+        pen.roundRect(-wristLength/2 + 12 + v * 11, wristWidth/2 - 7, 5, 5, 1);
+        pen.fill();
+      }
+      pen.shadowBlur = 0;
+
+      pen.restore();
+
+      // ===== FINGER ARMOR PLATES (SILVER) =====
+      for (let i = 0; i < FINGERS.length; i++) {
+        const f = FINGERS[i];
+        const fingerWidth = (18 - i * 2) * scale;
+
+        const segments = [
+          { from: f.mcp, to: f.pip, width: fingerWidth },
+          { from: f.pip, to: f.dip, width: fingerWidth * 0.85 },
+          { from: f.dip, to: f.tip, width: fingerWidth * 0.68 }
+        ];
+
+        for (let s = 0; s < segments.length; s++) {
+          const seg = segments[s];
+          const p1 = pts[seg.from];
+          const p2 = pts[seg.to];
+          const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+          const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+          pen.save();
+          pen.translate((p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
+          pen.rotate(angle);
+
+          pen.shadowColor = 'rgba(0,0,0,0.6)';
+          pen.shadowBlur = 6;
+          pen.shadowOffsetY = 3;
+
+          const w2 = seg.width / 2;
+          pen.fillStyle = silverGrad;
+          pen.strokeStyle = `rgba(255, 255, 255, ${rimAlpha * 0.8})`;
+          pen.lineWidth = 1.2;
+          pen.beginPath();
+          pen.moveTo(-len/2, -w2 * 0.85);
+          pen.quadraticCurveTo(0, -w2 * 1.12, len/2, -w2 * 0.85);
+          pen.lineTo(len/2, w2 * 0.85);
+          pen.quadraticCurveTo(0, w2 * 1.12, -len/2, w2 * 0.85);
+          pen.closePath();
+          pen.fill();
+          pen.stroke();
+          pen.shadowBlur = 0;
+          pen.shadowOffsetY = 0;
+
+          // Ambient occlusion / curvature shading
+          const curveShade = pen.createLinearGradient(0, -w2, 0, w2);
+          curveShade.addColorStop(0, 'rgba(255,255,255,0.35)');
+          curveShade.addColorStop(0.3, 'rgba(255,255,255,0.05)');
+          curveShade.addColorStop(0.55, 'rgba(0,0,0,0.1)');
+          curveShade.addColorStop(1, 'rgba(0,0,0,0.4)');
+          pen.fillStyle = curveShade;
+          pen.beginPath();
+          pen.moveTo(-len/2, -w2 * 0.85);
+          pen.quadraticCurveTo(0, -w2 * 1.12, len/2, -w2 * 0.85);
+          pen.lineTo(len/2, w2 * 0.85);
+          pen.quadraticCurveTo(0, w2 * 1.12, -len/2, w2 * 0.85);
+          pen.closePath();
+          pen.fill();
+
+          // Specular highlight streak
+          pen.strokeStyle = 'rgba(255,255,255,0.6)';
+          pen.lineWidth = Math.max(1, seg.width * 0.14);
+          pen.lineCap = 'round';
+          pen.beginPath();
+          pen.moveTo(-len/2 + len*0.15, -w2 * 0.4);
+          pen.lineTo(len/2 - len*0.15, -w2 * 0.4);
+          pen.stroke();
+
+          // Joint seam line
+          if (s < segments.length - 1) {
+            pen.strokeStyle = 'rgba(0,0,0,0.6)';
+            pen.lineWidth = 2;
+            pen.beginPath();
+            pen.moveTo(len/2 - 1, -w2);
+            pen.lineTo(len/2 - 1, w2);
+            pen.stroke();
+          }
+
+          pen.restore();
+        }
+
+        // ===== RED KNUCKLE GUARDS =====
+        const knucklePos = pts[f.mcp];
+        pen.save();
+        pen.translate(knucklePos.x, knucklePos.y);
+        pen.rotate(wristAngle);
+
+        const kSize = (12 - i) * scale;
+        pen.shadowColor = 'rgba(0,0,0,0.6)';
+        pen.shadowBlur = 6;
+        pen.shadowOffsetY = 3;
+
+        pen.fillStyle = redGrad;
+        pen.strokeStyle = 'rgba(20,20,20,0.8)';
+        pen.lineWidth = 1.5;
+        pen.beginPath();
+        pen.ellipse(0, 0, kSize * 1.2, kSize * 0.9, 0, 0, Math.PI * 2);
+        pen.fill();
+        pen.stroke();
+        pen.shadowBlur = 0;
+        pen.shadowOffsetY = 0;
+
+        // Center ridge
+        pen.strokeStyle = 'rgba(0,0,0,0.4)';
+        pen.lineWidth = 1.2;
+        pen.beginPath();
+        pen.moveTo(-kSize * 0.95, 0);
+        pen.lineTo(kSize * 0.95, 0);
+        pen.stroke();
+
+        // Highlight on dome
+        const knuckleHighlight = pen.createRadialGradient(-kSize*0.3, -kSize*0.3, 0, 0, 0, kSize*1.2);
+        knuckleHighlight.addColorStop(0, 'rgba(255,255,255,0.6)');
+        knuckleHighlight.addColorStop(0.5, 'rgba(255,255,255,0.1)');
+        knuckleHighlight.addColorStop(1, 'rgba(0,0,0,0.2)');
+        pen.fillStyle = knuckleHighlight;
+        pen.beginPath();
+        pen.ellipse(0, 0, kSize * 1.2, kSize * 0.9, 0, 0, Math.PI * 2);
+        pen.fill();
+
+        pen.restore();
+      }
+
+      // ===== THUMB ARMOR =====
+      const thumbSegments = [
+        { from: THUMB_CMC, to: THUMB_MCP, width: 15 * scale },
+        { from: THUMB_MCP, to: THUMB_IP, width: 13 * scale },
+        { from: THUMB_IP, to: THUMB_TIP, width: 11 * scale }
+      ];
+
+      for (const seg of thumbSegments) {
+        const p1 = pts[seg.from];
+        const p2 = pts[seg.to];
+        const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+        const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+
+        pen.save();
+        pen.translate((p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
+        pen.rotate(angle);
+
+        pen.shadowColor = 'rgba(0,0,0,0.6)';
+        pen.shadowBlur = 6;
+        pen.shadowOffsetY = 3;
+
+        pen.fillStyle = silverGrad;
+        pen.strokeStyle = `rgba(255, 255, 255, ${rimAlpha * 0.8})`;
+        pen.lineWidth = 1.2;
+        pen.beginPath();
+        pen.roundRect(-len/2, -seg.width/2, len, seg.width, seg.width/3);
+        pen.fill();
+        pen.stroke();
+        pen.shadowBlur = 0;
+        pen.shadowOffsetY = 0;
+
+        // Highlight
+        pen.fillStyle = 'rgba(255, 255, 255, 0.25)';
+        pen.beginPath();
+        pen.roundRect(-len/2 + 2, -seg.width/2 + 2, len - 4, Math.max(2, seg.width/4), seg.width/6);
+        pen.fill();
+
+        pen.restore();
+      }
+
+      // ===== PALM PLATE (SILVER BASE) =====
+      pen.save();
+      pen.translate(palmCenter.x, palmCenter.y);
+
+      const palmSize = 38 * scale;
+      pen.shadowColor = 'rgba(0,0,0,0.6)';
+      pen.shadowBlur = 10;
+      pen.shadowOffsetY = 5;
+      pen.fillStyle = silverGrad;
+      pen.strokeStyle = `rgba(255, 255, 255, ${rimAlpha})`;
+      pen.lineWidth = 2.5;
+      pen.beginPath();
+      pen.ellipse(0, 0, palmSize, palmSize * 0.85, wristAngle, 0, Math.PI * 2);
+      pen.fill();
+      pen.stroke();
+      pen.shadowBlur = 0;
+      pen.shadowOffsetY = 0;
+
+      pen.restore();
+
+      // ===== ICONIC TRIANGLE REPULSOR =====
+      pen.save();
+      pen.translate(palmCenter.x, palmCenter.y);
+      pen.rotate(wristAngle); // Align with hand direction
+
+      const triSize = 28 * scale;
+      const coreIntensity = isCharging ? charge : 0.4;
+
+      // 1. Metallic Silver Housing (Pointing towards fingers)
+      pen.fillStyle = '#2a2a2a';
+      pen.strokeStyle = '#111';
+      pen.lineWidth = 2.5;
+      pen.shadowColor = 'rgba(0,0,0,0.7)';
+      pen.shadowBlur = 10;
+      pen.beginPath();
+      pen.moveTo(triSize, 0);
+      pen.lineTo(-triSize * 0.5, triSize * 0.866);
+      pen.lineTo(-triSize * 0.5, -triSize * 0.866);
+      pen.closePath();
+      pen.fill();
+      pen.stroke();
+      pen.shadowBlur = 0;
+
+      // 2. Deep inset (darker)
+      pen.fillStyle = '#050a0f';
+      const inset = triSize * 0.8;
+      pen.beginPath();
+      pen.moveTo(inset, 0);
+      pen.lineTo(-inset * 0.5, inset * 0.866);
+      pen.lineTo(-inset * 0.5, -inset * 0.866);
+      pen.closePath();
+      pen.fill();
+
+      // 3. Glowing Blue Repulsor Core
+      const glow = triSize * 0.65;
+      pen.fillStyle = `rgba(0, 212, 255, ${0.6 + coreIntensity * 0.4})`;
+      pen.shadowBlur = 20 + coreIntensity * 40;
+      pen.shadowColor = '#00d4ff';
+      pen.beginPath();
+      pen.moveTo(glow, 0);
+      pen.lineTo(-glow * 0.5, glow * 0.866);
+      pen.lineTo(-glow * 0.5, -glow * 0.866);
+      pen.closePath();
+      pen.fill();
+
+      // 4. White-Hot Center
+      const core = triSize * 0.3;
+      pen.fillStyle = `rgba(255, 255, 255, ${0.8 + coreIntensity * 0.2})`;
+      pen.shadowBlur = 15;
+      pen.shadowColor = '#ffffff';
+      pen.beginPath();
+      pen.moveTo(core, 0);
+      pen.lineTo(-core * 0.5, core * 0.866);
+      pen.lineTo(-core * 0.5, -core * 0.866);
+      pen.closePath();
+      pen.fill();
+      pen.shadowBlur = 0;
+
+      // Energy crackle for charging
+      if (isCharging && charge > 0.3) {
+        pen.strokeStyle = `rgba(150, 220, 255, ${charge * 0.8})`;
+        pen.lineWidth = 1.5;
+        pen.shadowBlur = 10;
+        pen.shadowColor = '#00d4ff';
+        for (let c = 0; c < 4; c++) {
+          const ca = (c / 4) * Math.PI * 2 + performance.now() * 0.005;
+          const cl = triSize * (0.5 + Math.random() * 0.5);
+          pen.beginPath();
+          pen.moveTo(0, 0);
+          for (let s = 0; s < 3; s++) {
+            const sa = ca + (Math.random() - 0.5) * 0.8;
+            const sl = cl * (s + 1) / 3;
+            pen.lineTo(Math.cos(sa) * sl, Math.sin(sa) * sl);
+          }
+          pen.stroke();
+        }
+        pen.shadowBlur = 0;
+      }
+
+      pen.restore();
+
+      // Charging particles
+      if (isCharging && charge > 0.1) {
+        updateParticles(slot, palmCenter, charge, scale);
+      }
+
+      pen.restore();
+
+      return palmCenter;
+    }
+
+    function updateParticles(slot, center, charge, scale) {
+      const st = handState[slot];
+      const container = effects.particles[slot];
+
+      const particleChance = charge * 0.7;
+      if (Math.random() < particleChance) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 25 * scale + Math.random() * 25;
+        const particle = document.createElement('div');
+        particle.className = 'particle';
+        const size = 2 + Math.random() * 6;
+        particle.style.width = size + 'px';
+        particle.style.height = size + 'px';
+        particle.style.left = (center.x + Math.cos(angle) * dist) + 'px';
+        particle.style.top = (center.y + Math.sin(angle) * dist) + 'px';
+        container.appendChild(particle);
+
+        st.particles.push({
+          el: particle,
+          x: center.x + Math.cos(angle) * dist,
+          y: center.y + Math.sin(angle) * dist,
+          vx: (Math.random() - 0.5) * 3,
+          vy: -Math.random() * 4 - 1,
+          life: 1
+        });
+      }
+
+      for (let i = st.particles.length - 1; i >= 0; i--) {
+        const p = st.particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.1;
+        p.life -= 0.025;
+
+        if (p.life <= 0) {
+          p.el.remove();
+          st.particles.splice(i, 1);
+        } else {
+          p.el.style.left = p.x + 'px';
+          p.el.style.top = p.y + 'px';
+          p.el.style.opacity = p.life;
+          p.el.style.transform = `scale(${p.life})`;
+        }
+      }
+    }
+
+    // ========================================
+    // FIXED FIRE REPULSOR - direction always
+    // goes to the SAME SIDE as the firing hand
+    // ========================================
+    function fireRepulsor(slot, palmCenter, lm) {
+      const st = handState[slot];
+      if (st.isFiring) return;
+
+      st.isFiring = true;
+      stopChargeSound();
+      playFireSound();
+
+      shakeContainer.classList.remove('shake');
+      void shakeContainer.offsetWidth;
+      shakeContainer.classList.add('shake');
+
+      // ===== FIXED FIRING DIRECTION =====
+      const screenCenterX = window.innerWidth / 2;
+      const isRightSide = palmCenter.x > screenCenterX;
+
+      const wrist = toScreen(lm[WRIST]);
+      const midMcp = toScreen(lm[MIDDLE_MCP]);
+      let handDirX = midMcp.x - wrist.x;
+      let handDirY = midMcp.y - wrist.y;
+
+      // FORCE horizontal direction to be OUTWARD
+      if (isRightSide) {
+        handDirX = Math.abs(handDirX);
+        if (handDirX < 40) handDirX = 40 + Math.random() * 30;
+      } else {
+        handDirX = -Math.abs(handDirX);
+        if (handDirX > -40) handDirX = -(40 + Math.random() * 30);
+      }
+
+      // FORCE vertical direction to be UPWARD (Iron Man style)
+      handDirY = -Math.abs(handDirY);
+      if (handDirY > -60) handDirY = -(60 + Math.random() * 40);
+
+      const dirLen = Math.hypot(handDirX, handDirY) || 1;
+      let dirX = handDirX / dirLen;
+      let dirY = handDirY / dirLen;
+
+      const beamEndX = palmCenter.x + dirX * BEAM_LENGTH;
+      const beamEndY = palmCenter.y + dirY * BEAM_LENGTH;
+      const beamAngle = Math.atan2(dirY, dirX);
+      const beamDist = Math.hypot(beamEndX - palmCenter.x, beamEndY - palmCenter.y);
+
+      const beam = effects.beam[slot];
+      beam.style.left = palmCenter.x + 'px';
+      beam.style.top = palmCenter.y + 'px';
+      beam.style.width = beamDist + 'px';
+      beam.style.height = '70px';
+      beam.style.transformOrigin = 'left center';
+      beam.style.transform = `rotate(${beamAngle}rad)`;
+
+      const flash = effects.flash[slot];
+      flash.style.left = palmCenter.x + 'px';
+      flash.style.top = palmCenter.y + 'px';
+
+      const flashRing = flash.querySelector('.flash-ring');
+      if (flashRing) {
+        flashRing.style.animation = 'none';
+        void flashRing.offsetWidth;
+        flashRing.style.animation = 'flashRingExpand 0.3s ease-out forwards';
+      }
+
+      const impact = effects.impact[slot];
+      impact.style.left = beamEndX + 'px';
+      impact.style.top = beamEndY + 'px';
+      impact.innerHTML = '<div class="impact-flash"></div><div class="impact-shockwave"></div><div class="impact-shockwave-2"></div>';
+
+      for (let i = 0; i < 12; i++) {
+        const debris = document.createElement('div');
+        debris.className = 'impact-debris';
+        const angle = (i / 12) * Math.PI * 2 + Math.random() * 0.5;
+        const vel = 5 + Math.random() * 12;
+        debris.style.left = '0px';
+        debris.style.top = '0px';
+        impact.appendChild(debris);
+
+        let dx = 0, dy = 0;
+        const animDebris = () => {
+          dx += Math.cos(angle) * vel;
+          dy += Math.sin(angle) * vel + 2;
+          debris.style.transform = `translate(${dx}px, ${dy}px) rotate(${dx * 2}deg)`;
+          debris.style.opacity = Math.max(0, 1 - Math.abs(dx) / 250);
+          if (Math.abs(dx) < 350) requestAnimationFrame(animDebris);
+          else debris.remove();
+        };
+        requestAnimationFrame(animDebris);
+      }
+
+      screenFlash.style.setProperty('--fx', (palmCenter.x / window.innerWidth * 100) + '%');
+      screenFlash.style.setProperty('--fy', (palmCenter.y / window.innerHeight * 100) + '%');
+
+      heatDistortion.style.left = (palmCenter.x - 200) + 'px';
+      heatDistortion.style.top = (palmCenter.y - 100) + 'px';
+      heatDistortion.style.width = '400px';
+      heatDistortion.style.height = '200px';
+
+      const startTime = performance.now();
+      const duration = FIRE_DURATION;
+
+      function animate() {
+        const elapsed = performance.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        if (progress < 0.1) {
+          const flashIntensity = 1 - (progress / 0.1);
+          beam.style.opacity = flashIntensity;
+          flash.style.opacity = flashIntensity;
+          screenFlash.style.opacity = flashIntensity * 0.9;
+          heatDistortion.style.opacity = flashIntensity * 0.6;
+        } else if (progress < 0.3) {
+          const sustainProgress = (progress - 0.1) / 0.2;
+          beam.style.opacity = 0.9 - sustainProgress * 0.3;
+          flash.style.opacity = Math.max(0, 0.5 - sustainProgress);
+          screenFlash.style.opacity = Math.max(0, 0.5 - sustainProgress * 0.5);
+          heatDistortion.style.opacity = 0.35;
+        } else {
+          const fadeProgress = (progress - 0.3) / 0.7;
+          beam.style.opacity = Math.max(0, 0.6 * (1 - fadeProgress));
+          flash.style.opacity = 0;
+          screenFlash.style.opacity = 0;
+          heatDistortion.style.opacity = Math.max(0, 0.2 * (1 - fadeProgress));
+        }
+
+        if (progress < 0.5) {
+          impact.style.opacity = 1 - (progress / 0.5) * 0.4;
+        } else {
+          impact.style.opacity = Math.max(0, 0.6 * (1 - (progress - 0.5) / 0.5));
+        }
+
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          beam.style.opacity = '0';
+          flash.style.opacity = '0';
+          impact.style.opacity = '0';
+          screenFlash.style.opacity = '0';
+          heatDistortion.style.opacity = '0';
+          st.isFiring = false;
+        }
+      }
+
+      beam.style.opacity = '1';
+      flash.style.opacity = '1';
+      impact.style.opacity = '1';
+      screenFlash.style.opacity = '1';
+
+      requestAnimationFrame(animate);
+
+      st.charge = 0;
+      updateHUD(0, 0);
+    }
+
+    function updateHUD(status, power) {
+      if (status !== null) {
+        hudStatus.textContent = status;
+        hudStatus.style.color = status === 'FIRING!' ? '#ff0040' : 
+                                status === 'CHARGING' ? '#00d4ff' : '#fff';
+      }
+      hudPowerFill.style.width = (power * 100) + '%';
+      hudPowerText.textContent = Math.round(power * 100) + '%';
+
+      if (power >= 0.95) {
+        chargeWarning.classList.add('active');
+      } else {
+        chargeWarning.classList.remove('active');
+      }
+    }
+
+    function onResults(res) {
+      updateVideoMap();
+      pen.clearRect(0, 0, canvas.width, canvas.height);
+
+      const seen = [false, false];
+      let maxCharge = 0;
+      let anyCharging = false;
+
+      if (res.multiHandLandmarks && res.multiHandedness) {
+        res.multiHandLandmarks.forEach((lm, i) => {
+          const label = res.multiHandedness[i].label;
+          const slot = label === 'Right' ? 1 : 0;
+          seen[slot] = true;
+
+          const st = handState[slot];
+          st.detected = true;
+
+          const open = isPalmOpen(lm);
+          const fist = isFist(lm);
+
+          if (fist && !st.isFiring) {
+            st.charge = Math.min(1, st.charge + CHARGE_RATE);
+            anyCharging = true;
+            playChargeSound(slot);
+          }
+
+          if (open && st.charge > 0.1 && !st.isFiring) {
+            const wristPt = toScreen(lm[WRIST]);
+            const midMcpPt = toScreen(lm[MIDDLE_MCP]);
+            const palmCenter = {
+              x: (wristPt.x + midMcpPt.x) / 2,
+              y: (wristPt.y + midMcpPt.y) / 2
+            };
+            fireRepulsor(slot, palmCenter, lm);
+          }
+
+          st.wasFist = fist;
+
+          const isCharging = fist && st.charge > 0.02 && !st.isFiring;
+          drawRealisticArmor(lm, slot, st.charge, isCharging);
+
+          maxCharge = Math.max(maxCharge, st.charge);
+        });
+      }
+
+      for (let i = 0; i < 2; i++) {
+        if (!seen[i]) {
+          handState[i].detected = false;
+          handState[i].charge = Math.max(0, handState[i].charge - DECAY_RATE);
+          
+          handState[i].particles.forEach(p => p.el.remove());
+          handState[i].particles = [];
+        }
+      }
+
+      if (!anyCharging) {
+        stopChargeSound();
+      }
+
+      let status = 'STANDBY';
+      if (handState[0].isFiring || handState[1].isFiring) {
+        status = 'FIRING!';
+      } else if (maxCharge > 0.05) {
+        status = 'CHARGING';
+      }
+      updateHUD(status, maxCharge);
+    }
+
+    const hands = new Hands({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+    });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.65,
+      minTrackingConfidence: 0.65,
+      selfieMode: true
+    });
+    hands.onResults(onResults);
+
+    const camera = new Camera(camVideo, {
+      onFrame: async () => { await hands.send({ image: camVideo }); },
+      width: 1280,
+      height: 720
+    });
+    camera.start();
+
+    document.addEventListener('click', initAudio, { once: true });
+    document.addEventListener('touchstart', initAudio, { once: true });
+  </script>
+</body>
+</html>
